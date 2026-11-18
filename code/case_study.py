@@ -1,0 +1,18 @@
+"""Illustrative held-out extremes; encoder chosen on validation, cases never select models."""
+import os,json,numpy as np
+from pathlib import Path
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from run import load,error,D,R,snapshot_key,dump
+
+def main():
+ rows,x,y=load();T=R/os.environ.get('ATTENTION_PIT_CASE_SUBDIR','tuning01');p=np.load(T/'predictions.npz');sel=json.load(open(T/'selection.json'));names={'Qwen3':'Qwen3-8B','Mistral7B':'Mistral-7B','GPToss20B':'gpt-oss-20b','DeepSeekV2Lite':'DeepSeek-V2-Lite','KimiVLA3B':'Kimi-VL-A3B'};chosen=min(names,key=lambda k:sel[k+'_pooled']['pooled_val_WAPE']);llm=chosen+'_pooled';num='NumericReadout_pooled';fresh=set(json.load(open(R/'protocol.json')).get('fresh_test_pageids',[])) if (R/'protocol.json').exists() else set();ii=np.array([i for i,z in enumerate(rows) if z['split']=='test' and z['kind']=='event' and z['lead']==1 and (not fresh or z['pageid'] in fresh)]);en=error(y[ii],p[num][ii]);el=error(y[ii],p[llm][ii]);delta=en-el;chosen_idx=[int(np.argmax(delta)),int(np.argmin(delta))];cases=[]
+ for typ,j in zip(['largest_improvement','largest_degradation'],chosen_idx):
+  i=ii[j];z=rows[i];key=snapshot_key(z);snap=json.load(open(D/'snapshots'/(key+'.json')));text=str(np.load(D/'representations'/(key+'.npz'))['text']);cases.append({'selection':typ,'event_id':z['event_id'],'title':z['title'],'origin':z['origin'],'target_start':z['target_start'],'revision_time':snap['revision_time'],'revid':snap['revid'],'source_url':'https://en.wikipedia.org/w/index.php?oldid='+str(snap['revid']),'retained_model_text':text,'truth':y[i].tolist(),'numeric':p[num][i].tolist(),'llm':p[llm][i].tolist(),'frozen_text':p[chosen+'Frozen7d_pooled'][i].tolist(),'mismatched_text':p[chosen+'FixedMismatch_pooled'][i].tolist(),'numeric_WAPE':float(en[j]),'LLM_WAPE':float(el[j]),'gain_pp':float(delta[j])})
+ dump(T/'case_study.json',{'encoder':names[chosen],'encoder_selection':'lowest pooled validation WAPE among5 encoders','case_selection':'largest gain and largest harm among held-out event windows at one-day lead, illustrative extremes not representative estimates','n_test_events':len(ii),'cases':cases})
+ plt.rcParams.update({'font.family':'sans-serif','font.sans-serif':['Liberation Sans','DejaVu Sans'],'font.size':6.2,'axes.spines.top':False,'axes.spines.right':False,'axes.linewidth':.6,'pdf.fonttype':42});fig,axs=plt.subplots(1,2,figsize=(3.35,1.65));fig.subplots_adjust(left=.13,right=.99,bottom=.30,top=.77,wspace=.42)
+ for ax,c,letter in zip(axs,cases,'ab'):
+  xx=np.arange(7);ax.plot(xx,np.array(c['truth'])/1000,'o-',color='#303944',lw=1,ms=2,label='Observed');ax.plot(xx,np.array(c['numeric'])/1000,'s--',color='#7D9BAA',lw=.85,ms=2,label='Numeric');ax.plot(xx,np.array(c['llm'])/1000,'^-',color='#CE8E76',lw=.85,ms=2,label=names[chosen]);title=c['title'];title='California wildfires' if title=='2025 California wildfires' else 'Korean Air Force' if title=='Republic of Korea Air Force' else title[:26];ax.set_title('('+letter+') '+title+'\n'+f"Gain {c['gain_pp']:+.2f} pp",fontsize=6.1,loc='left',pad=4);ax.set_xticks([0,3,6],['0','3','6']);ax.set_xlabel('Target day',labelpad=1);ax.tick_params(labelsize=5.6,length=2);ax.set_ylim(bottom=0);ax.grid(axis='y',alpha=.1,lw=.4)
+ axs[0].set_ylabel('Pageviews (thousands)',labelpad=2);handles,labels=axs[0].get_legend_handles_labels();fig.legend(handles,labels,loc='lower center',ncol=3,frameon=False,fontsize=5.7,columnspacing=.9,handlelength=1.4);fig.savefig(T/'case_study.pdf');fig.savefig(T/'case_study.png',dpi=450);print('CASE STUDY COMPLETE',names[chosen],[(c['title'],c['gain_pp']) for c in cases],flush=True)
+if __name__=='__main__':main()
